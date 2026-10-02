@@ -13,16 +13,19 @@ const handler = createMcpHandler((server) => {
           .string()
           .url()
           .describe("Public URL of the audio file to transcribe"),
+
         language_code: z
           .string()
           .default("en-IN")
           .describe("Language code such as en-IN or hi-IN"),
+
         preferred_language: z
           .string()
           .default("en-IN")
           .describe("Preferred transcription language"),
       }),
     },
+
     async ({ audio_url, language_code, preferred_language }) => {
       try {
         const audioResponse = await fetch(audio_url);
@@ -36,19 +39,23 @@ const handler = createMcpHandler((server) => {
         const audioBlob = await audioResponse.blob();
 
         const formData = new FormData();
+
         formData.append("audio_file", audioBlob, "audio.wav");
         formData.append("language_code", language_code);
         formData.append("preferred_language", preferred_language);
         formData.append("format", "transcribe");
         formData.append("itn_native_numerals", "true");
 
-        const response = await fetch("https://api.vachana.ai/stt/v3", {
-          method: "POST",
-          headers: {
-            "X-API-Key-ID": process.env.GNANI_API_KEY || "",
-          },
-          body: formData,
-        });
+        const response = await fetch(
+          "https://api.vachana.ai/stt/v3",
+          {
+            method: "POST",
+            headers: {
+              "X-API-Key-ID": process.env.GNANI_API_KEY || "",
+            },
+            body: formData,
+          }
+        );
 
         const data = await response.json();
 
@@ -96,21 +103,28 @@ const handler = createMcpHandler((server) => {
       title: "Gnani Text to Speech",
       description:
         "Convert text into speech using Gnani AI Text-to-Speech.",
+
       inputSchema: z.object({
         text: z.string().min(1).max(5000),
-        voice: z.string().default("Karan"),
+
+        voice: z
+          .string()
+          .default("Karan"),
       }),
     },
+
     async ({ text, voice }) => {
       try {
         const response = await fetch(
           "https://api.vachana.ai/api/v1/tts/sse",
           {
             method: "POST",
+
             headers: {
               "Content-Type": "application/json",
               "X-API-Key-ID": process.env.GNANI_API_KEY || "",
             },
+
             body: JSON.stringify({
               audio_config: {
                 bitrate: "192k",
@@ -120,6 +134,7 @@ const handler = createMcpHandler((server) => {
                 sample_rate: 44100,
                 sample_width: 2,
               },
+
               model: "vachana-voice-v3",
               text,
               voice,
@@ -167,4 +182,4 @@ const handler = createMcpHandler((server) => {
   );
 });
 
-export { handler as GET, handler as POST };
+export { handler as GET, handler as POST, handler as DELETE };
