@@ -1,5 +1,5 @@
 {
-  "name": "next.js-mcp-server",
+  "name": "next-js-mcp-server",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -19,11 +19,8 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "^1.26.0",
     "@types/node": "^20",
     "@types/react": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "^15.2.6",
     "typescript": "^5"
   },
   "engines": {
