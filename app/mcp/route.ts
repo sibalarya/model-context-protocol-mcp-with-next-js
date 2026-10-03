@@ -2,48 +2,68 @@ import { createMcpHandler } from "mcp-handler";
 import { z } from "zod";
 
 const handler = createMcpHandler((server) => {
+  // ============================================================
+  // GNANI - SPEECH TO TEXT
+  // ============================================================
+
   server.registerTool(
     "gnani_speech_to_text",
     {
-      title: "Gnani Speech to Text",
       description:
-        "Convert an audio file into text using Gnani AI Speech-to-Text.",
-      inputSchema: z.object({
-        audio_url: z
+        "Convert user speech/audio into text using the Gnani STT API. All voice input for Haq should pass through this tool.",
+      inputSchema: {
+        audio_base64: z
           .string()
-          .url()
-          .describe("Public URL of the audio file to transcribe"),
-
+          .describe("Base64 encoded audio file"),
         language_code: z
           .string()
           .default("en-IN")
           .describe("Language code such as en-IN or hi-IN"),
-
         preferred_language: z
           .string()
-          .default("en-IN")
-          .describe("Preferred transcription language"),
-      }),
+          .optional()
+          .describe("Preferred spoken language"),
+        format: z
+          .string()
+          .default("transcribe")
+          .describe("Gnani transcription mode"),
+      },
     },
+    async ({
+      audio_base64,
+      language_code,
+      preferred_language,
+      format,
+    }) => {
+      const apiKey = process.env.GNANI_API_KEY;
 
-    async ({ audio_url, language_code, preferred_language }) => {
+      if (!apiKey) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Gnani STT failed: GNANI_API_KEY is not configured.",
+            },
+          ],
+        };
+      }
+
       try {
-        const audioResponse = await fetch(audio_url);
-
-        if (!audioResponse.ok) {
-          throw new Error(
-            `Could not download audio: HTTP ${audioResponse.status}`
-          );
-        }
-
-        const audioBlob = await audioResponse.blob();
+        const audioBuffer = Buffer.from(audio_base64, "base64");
 
         const formData = new FormData();
 
+        const audioBlob = new Blob([audioBuffer], {
+          type: "audio/wav",
+        });
+
         formData.append("audio_file", audioBlob, "audio.wav");
         formData.append("language_code", language_code);
-        formData.append("preferred_language", preferred_language);
-        formData.append("format", "transcribe");
+        formData.append(
+          "preferred_language",
+          preferred_language || language_code
+        );
+        formData.append("format", format);
         formData.append("itn_native_numerals", "true");
 
         const response = await fetch(
@@ -51,18 +71,38 @@ const handler = createMcpHandler((server) => {
           {
             method: "POST",
             headers: {
-              "X-API-Key-ID": process.env.GNANI_API_KEY || "",
+              "X-API-Key-ID": apiKey,
             },
             body: formData,
           }
         );
 
-        const data = await response.json();
+        const responseText = await response.text();
 
         if (!response.ok) {
-          throw new Error(
-            `Gnani STT failed: ${response.status} ${JSON.stringify(data)}`
-          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Gnani STT API error (${response.status}): ${responseText}`,
+              },
+            ],
+          };
+        }
+
+        let data: any;
+
+        try {
+          data = JSON.parse(responseText);
+        } catch {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Gnani STT returned a non-JSON response: ${responseText}`,
+              },
+            ],
+          };
         }
 
         return {
@@ -71,8 +111,8 @@ const handler = createMcpHandler((server) => {
               type: "text",
               text: JSON.stringify({
                 success: data.success,
-                transcript: data.transcript || "",
                 request_id: data.request_id,
+                transcript: data.transcript,
               }),
             },
           ],
@@ -82,62 +122,69 @@ const handler = createMcpHandler((server) => {
           content: [
             {
               type: "text",
-              text: JSON.stringify({
-                success: false,
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : "Unknown Gnani STT error",
-              }),
+              text: `Gnani STT request failed: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
             },
           ],
-          isError: true,
         };
       }
     }
   );
 
+  // ============================================================
+  // GNANI - TEXT TO SPEECH
+  // ============================================================
+
   server.registerTool(
     "gnani_text_to_speech",
     {
-      title: "Gnani Text to Speech",
       description:
-        "Convert text into speech using Gnani AI Text-to-Speech.",
-
-      inputSchema: z.object({
-        text: z.string().min(1).max(5000),
-
+        "Convert Haq's text response into speech using the Gnani TTS API.",
+      inputSchema: {
+        text: z.string().describe("Text to convert into speech"),
+        language: z
+          .string()
+          .default("en-IN")
+          .describe("Language for the generated speech"),
         voice: z
           .string()
-          .default("Karan"),
-      }),
+          .default("Yashvi")
+          .describe("Gnani voice name"),
+      },
     },
+    async ({ text, language, voice }) => {
+      const apiKey = process.env.GNANI_API_KEY;
 
-    async ({ text, voice }) => {
+      if (!apiKey) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Gnani TTS failed: GNANI_API_KEY is not configured.",
+            },
+          ],
+        };
+      }
+
       try {
         const response = await fetch(
           "https://api.vachana.ai/api/v1/tts/sse",
           {
             method: "POST",
-
             headers: {
+              "X-API-Key-ID": apiKey,
               "Content-Type": "application/json",
-              "X-API-Key-ID": process.env.GNANI_API_KEY || "",
             },
-
             body: JSON.stringify({
               audio_config: {
-                bitrate: "192k",
-                container: "mp3",
-                encoding: "linear_pcm",
-                num_channels: 1,
-                sample_rate: 44100,
-                sample_width: 2,
+                audio_encoding: "mp3",
+                sample_rate_hertz: 24000,
               },
-
               model: "vachana-voice-v3",
               text,
               voice,
+              language,
             }),
           }
         );
@@ -145,9 +192,14 @@ const handler = createMcpHandler((server) => {
         const responseText = await response.text();
 
         if (!response.ok) {
-          throw new Error(
-            `Gnani TTS failed: ${response.status} ${responseText}`
-          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Gnani TTS API error (${response.status}): ${responseText}`,
+              },
+            ],
+          };
         }
 
         return {
@@ -156,6 +208,9 @@ const handler = createMcpHandler((server) => {
               type: "text",
               text: JSON.stringify({
                 success: true,
+                provider: "Gnani",
+                message: "Speech generated successfully.",
+                response_size: responseText.length,
                 audio_response: responseText,
               }),
             },
@@ -166,202 +221,45 @@ const handler = createMcpHandler((server) => {
           content: [
             {
               type: "text",
-              text: JSON.stringify({
-                success: false,
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : "Unknown Gnani TTS error",
-              }),
+              text: `Gnani TTS request failed: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
             },
           ],
-          isError: true,
         };
       }
     }
   );
-});
 
-export { handler as POST, handler as DELETE };
+  // ============================================================
+  // DELHIVERY - SHIPMENT MANIFESTATION MOCK
+  // ============================================================
 
-// Delhivery Mock / Manifestation
-server.registerTool(
-      "delhivery_shipment_manifestation",
-      {
-        title: "Delhivery Shipment Manifestation",
-        description:
-          "Mock endpoint for Delhivery shipment manifestation. Supports test_mode: success | no_rider | low_balance | timeout | malformed.",
-        inputSchema: z.object({
-          test_mode: z
-            .enum(["success", "no_rider", "low_balance",
-            "timeout", "malformed"])
-            .default("success"),
-          shipment: z
-            .object({
-              order_id: z.string(),
-              pickup_location: z.string(),
-              delivery_location: z.string(),
-              consignee_name: z.string(),
-              consignee_phone: z.string(),
-              weight: z.number().optional(),
-              payment_mode: z.string().optional(),
-            })
-            .optional(),
-        }),
+  server.registerTool(
+    "delhivery_shipment_manifestation",
+    {
+      description:
+        "Mock of Delhivery Shipment Manifestation API. Used by Haq to send a physical document/package for delivery. Supports controlled success and failure cases for testing.",
+      inputSchema: {
+        test_mode: z
+          .enum([
+            "success",
+            "no_rider",
+            "low_balance",
+            "timeout",
+            "malformed",
+          ])
+          .default("success")
+          .describe("Mock response scenario"),
+        shipment: z
+          .record(z.any())
+          .optional()
+          .describe("Delhivery shipment payload"),
       },
-      async (args) => {
-        const mode = args.test_mode ?? "success";
-        const shipment = args.shipment || {
-          order_id: "mock-order-001",
-          pickup_location: "Pitampura, Delhi",
-          delivery_location: "Jodhpur, Rajasthan",
-          consignee_name: "Test User",
-          consignee_phone: "9876543210",
-          weight: 1.2,
-          payment_mode: "prepaid",
-        };
-
-        if (mode === "success") {
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({
-                  success: true,
-                  waybill: "DELHI123456789",
-                  awb_number: "DELHI123456789",
-                  package_type: "Surface",
-                  weight: shipment.weight ?? 1.2,
-                  dimensions: "30x20x10",
-                  service_type: "Doc",
-                  status: "Manifested",
-                  pickup_date: new Date().toISOString(),
-                }),
-              },
-            ],
-          };
-        }
-
-        if (mode === "no_rider") {
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({
-                  success: false,
-                  error: "no_rider_available",
-                  message:
-                    "No rider available for pickup right now. Please try again later or use a different slot.",
-                }),
-              },
-            ],
-          };
-        }
-
-        if (mode === "low_balance") {
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({
-                  success: false,
-                  error: "low_balance",
-                  message:
-                    "Account balance is too low to generate a pickup. Please top up your account.",
-                }),
-              },
-            ],
-          };
-        }
-
-        if (mode === "timeout") {
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({
-                  success: false,
-                  error: "timeout",
-                  message:
-                    "The request timed out while creating the shipment. Please retry.",
-                }),
-              },
-            ],
-          };
-        }
-
-        // malformed
-        return {
-          content: [
-            {
-              type: "text",
-              text: "OKAY" // raw garbage string, not a JSON object
-            },
-          ],
-        };
-      }
-    );
-
-    // Delhivery Mock / Tracking
-    server.registerTool(
-      "delhivery_shipment_tracking",
-      {
-        title: "Delhivery Shipment Tracking",
-        description:
-          "Mock endpoint for Delhivery shipment tracking. Supports test_mode.",
-        inputSchema: z.object({
-          test_mode: z
-            .enum(["success", "no_rider", "low_balance",
-            "timeout", "malformed"])
-            .default("success"),
-          awb_number: z.string().optional(),
-        }),
-      },
-      async (args) => {
-        const mode = args.test_mode ?? "success";
-        const awb = args.awb_number || "DELHI123456789";
-
-        if (mode === "success") {
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({
-                  success: true,
-                  awb_number: awb,
-                  status: "In Transit",
-                  origin: "Delhi",
-                  destination: "Jodhpur",
-                  estimated_delivery: new Date(Date.now() + 86400000)
-                    .toISOString(),
-                  last_updated: new Date().toISOString(),
-                }),
-              },
-            ],
-          };
-        }
-
-        if (mode === "timeout") {
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({
-                  success: false,
-                  error: "timeout",
-                  message:
-                    "Tracking request timed out. Please try again later.",
-                }),
-              },
-            ],
-          };
-        }
-
-        if (mode === "malformed") {
-          return {
-            content: [{ type: "text", text: "???"}],
-          };
-        }
+    },
+    async ({ test_mode, shipment }) => {
+      if (test_mode === "timeout") {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
 
         return {
           content: [
@@ -369,84 +267,304 @@ server.registerTool(
               type: "text",
               text: JSON.stringify({
                 success: false,
-                error: mode + "_by_delhivery_mock",
-                message:
-                  "Operation failed according to Delhivery mocked outcome: " + mode,
+                error: "DELHIVERY_TIMEOUT",
+                message: "Delhivery shipment manifestation timed out.",
               }),
             },
           ],
         };
       }
-    );
 
-    // Delhivery Mock / Pickup Request
-    server.registerTool(
-      "delhivery_pickup_request",
-      {
-        title: "Delhivery Pickup Request",
-        description:
-          "Mock endpoint for Delhivery pickup request. Supports test_mode.",
-        inputSchema: z.object({
-          test_mode: z
-            .enum(["success", "no_rider", "low_balance",
-            "timeout", "malformed"])
-            .default("success"),
-          pickup: z
-            .object({
-              pickup_location_id: z.string(),
-              address_line: z.string(),
-              city: z.string(),
-              state: z.string(),
-              pincode: z.string(),
-              scheduled_date: z.string().optional(),
-            })
-            .optional(),
-        }),
-      },
-      async (args) => {
-        const mode = args.test_mode ?? "success";
-        if (mode === "success") {
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({
-                  success: true,
-                  pickup_request_id: "PICK" + Date.now().toString(),
-                  status: "Scheduled",
-                  eta: new Date(Date.now() + 3600000).toISOString(),
-                }),
-              },
-            ],
-          };
-        }
-        if (mode === "no_rider") {
-          return {
-            content: [
-              { type: "text", text: JSON.stringify({ success: false, error: "no_rider_available" }) },
-            ]
-          };
-        }
-        if (mode === "low_balance") {
-          return {
-            content: [
-              { type: "text", text: JSON.stringify({ success: false, error: "low_balance" }) },
-            ]
-          };
-        }
-        if (mode === "timeout") {
-          return {
-            content: [
-              { type: "text", text: JSON.stringify({ success: false, error: "timeout" }) },
-            ]
-          };
-        }
-        // malformed
+      if (test_mode === "malformed") {
         return {
-          content: [{ type: "text", text: "{ not-json }" }],
+          content: [
+            {
+              type: "text",
+              text: "THIS_IS_NOT_VALID_DELHIVERY_JSON",
+            },
+          ],
         };
       }
-    );
+
+      if (test_mode === "no_rider") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                status: "failed",
+                error: "NO_RIDER_AVAILABLE",
+                message:
+                  "No delivery executive is currently available for this pickup.",
+              }),
+            },
+          ],
+        };
+      }
+
+      if (test_mode === "low_balance") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                status: "failed",
+                error: "INSUFFICIENT_BALANCE",
+                message:
+                  "Client manifest charge API failed due to insufficient balance.",
+              }),
+            },
+          ],
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              status: "Manifested",
+              provider: "Delhivery",
+              waybill: "HAQ" + Date.now(),
+              reference_number:
+                shipment?.reference_number || "HAQ-CLAIM-001",
+              message: "Shipment successfully manifested.",
+            }),
+          },
+        ],
+      };
+    }
+  );
+
+  // ============================================================
+  // DELHIVERY - SHIPMENT TRACKING MOCK
+  // ============================================================
+
+  server.registerTool(
+    "delhivery_shipment_tracking",
+    {
+      description:
+        "Mock of Delhivery Shipment Tracking API. Used by Haq to check the current delivery status of a shipment.",
+      inputSchema: {
+        test_mode: z
+          .enum([
+            "success",
+            "no_rider",
+            "low_balance",
+            "timeout",
+            "malformed",
+          ])
+          .default("success")
+          .describe("Mock response scenario"),
+        awb_number: z
+          .string()
+          .optional()
+          .describe("Delhivery AWB / waybill number"),
+      },
+    },
+    async ({ test_mode, awb_number }) => {
+      if (test_mode === "timeout") {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                error: "DELHIVERY_TIMEOUT",
+                message: "Shipment tracking request timed out.",
+              }),
+            },
+          ],
+        };
+      }
+
+      if (test_mode === "malformed") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "??? MALFORMED RESPONSE ???",
+            },
+          ],
+        };
+      }
+
+      if (test_mode === "no_rider") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                status: "Pending",
+                error: "NO_RIDER_AVAILABLE",
+                message:
+                  "No delivery executive has been assigned to this shipment.",
+                AWB: awb_number || "HAQ-DEMO-AWB",
+              }),
+            },
+          ],
+        };
+      }
+
+      if (test_mode === "low_balance") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                error: "INSUFFICIENT_BALANCE",
+                message: "Client account balance is insufficient.",
+                AWB: awb_number || "HAQ-DEMO-AWB",
+              }),
+            },
+          ],
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              Shipment: {
+                Status: {
+                  Status: "In Transit",
+                  StatusDateTime: new Date().toISOString(),
+                  StatusType: "UD",
+                  StatusLocation: "Jaipur",
+                  Instructions: "Shipment in transit",
+                },
+                PickUpDate: new Date().toISOString(),
+                ReferenceNo: "HAQ-CLAIM-001",
+                AWB: awb_number || "HAQ-DEMO-AWB",
+              },
+            }),
+          },
+        ],
+      };
+    }
+  );
+
+  // ============================================================
+  // DELHIVERY - PICKUP REQUEST CREATION MOCK
+  // ============================================================
+
+  server.registerTool(
+    "delhivery_pickup_request",
+    {
+      description:
+        "Mock of Delhivery Pickup Request Creation API. Used by Haq when physical documents or items need to be collected.",
+      inputSchema: {
+        test_mode: z
+          .enum([
+            "success",
+            "no_rider",
+            "low_balance",
+            "timeout",
+            "malformed",
+          ])
+          .default("success")
+          .describe("Mock response scenario"),
+        pickup: z
+          .record(z.any())
+          .optional()
+          .describe("Delhivery pickup request payload"),
+      },
+    },
+    async ({ test_mode, pickup }) => {
+      if (test_mode === "timeout") {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                error: "DELHIVERY_TIMEOUT",
+                message: "Pickup request timed out.",
+              }),
+            },
+          ],
+        };
+      }
+
+      if (test_mode === "malformed") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "{ THIS RESPONSE IS MALFORMED ",
+            },
+          ],
+        };
+      }
+
+      if (test_mode === "no_rider") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                error: "NO_RIDER_AVAILABLE",
+                message:
+                  "No field executive is currently available for this pickup location.",
+              }),
+            },
+          ],
+        };
+      }
+
+      if (test_mode === "low_balance") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                error: "INSUFFICIENT_BALANCE",
+                message:
+                  "Pickup request could not be created because the client balance is insufficient.",
+              }),
+            },
+          ],
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              status: "Pickup Scheduled",
+              pickup_request_id: "PUR-" + Date.now(),
+              pickup_location:
+                pickup?.pickup_location || "Haq Claim Pickup Location",
+              pickup_date:
+                pickup?.pickup_date ||
+                new Date().toISOString().slice(0, 10),
+              message: "Pickup request created successfully.",
+            }),
+          },
+        ],
+      };
+    }
+  );
+});
+
+// ============================================================
+// SINGLE AND ONLY ROUTE EXPORT
+// ============================================================
 
 export {
   handler as GET,
