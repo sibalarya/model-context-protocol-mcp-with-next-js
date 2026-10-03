@@ -182,7 +182,7 @@ const handler = createMcpHandler((server) => {
   );
 });
 
-export { handler as GET, handler as POST, handler as DELETE };
+export { handler as POST, handler as DELETE };
 
 // Delhivery Mock / Manifestation
 server.registerTool(
