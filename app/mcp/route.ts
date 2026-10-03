@@ -185,7 +185,7 @@ const handler = createMcpHandler((server) => {
 export { handler as GET, handler as POST, handler as DELETE };
 
 // Delhivery Mock / Manifestation
-    server.registerTool(
+server.registerTool(
       "delhivery_shipment_manifestation",
       {
         title: "Delhivery Shipment Manifestation",
