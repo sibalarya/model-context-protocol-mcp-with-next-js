@@ -447,7 +447,6 @@ server.registerTool(
         };
       }
     );
-});
 
 export {
   handler as GET,
