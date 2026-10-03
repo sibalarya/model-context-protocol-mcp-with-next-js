@@ -183,3 +183,267 @@ const handler = createMcpHandler((server) => {
 });
 
 export { handler as GET, handler as POST, handler as DELETE };
+
+// Delhivery Mock / Manifestation
+    server.registerTool(
+      "delhivery_shipment_manifestation",
+      {
+        title: "Delhivery Shipment Manifestation",
+        description:
+          "Mock endpoint for Delhivery shipment manifestation. Supports test_mode: success | no_rider | low_balance | timeout | malformed.",
+        inputSchema: z.object({
+          test_mode: z
+            .enum(["success", "no_rider", "low_balance",
+            "timeout", "malformed"])
+            .default("success"),
+          shipment: z
+            .object({
+              order_id: z.string(),
+              pickup_location: z.string(),
+              delivery_location: z.string(),
+              consignee_name: z.string(),
+              consignee_phone: z.string(),
+              weight: z.number().optional(),
+              payment_mode: z.string().optional(),
+            })
+            .optional(),
+        }),
+      },
+      async (args) => {
+        const mode = args.test_mode ?? "success";
+        const shipment = args.shipment || {
+          order_id: "mock-order-001",
+          pickup_location: "Pitampura, Delhi",
+          delivery_location: "Jodhpur, Rajasthan",
+          consignee_name: "Test User",
+          consignee_phone: "9876543210",
+          weight: 1.2,
+          payment_mode: "prepaid",
+        };
+
+        if (mode === "success") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  waybill: "DELHI123456789",
+                  awb_number: "DELHI123456789",
+                  package_type: "Surface",
+                  weight: shipment.weight ?? 1.2,
+                  dimensions: "30x20x10",
+                  service_type: "Doc",
+                  status: "Manifested",
+                  pickup_date: new Date().toISOString(),
+                }),
+              },
+            ],
+          };
+        }
+
+        if (mode === "no_rider") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  error: "no_rider_available",
+                  message:
+                    "No rider available for pickup right now. Please try again later or use a different slot.",
+                }),
+              },
+            ],
+          };
+        }
+
+        if (mode === "low_balance") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  error: "low_balance",
+                  message:
+                    "Account balance is too low to generate a pickup. Please top up your account.",
+                }),
+              },
+            ],
+          };
+        }
+
+        if (mode === "timeout") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  error: "timeout",
+                  message:
+                    "The request timed out while creating the shipment. Please retry.",
+                }),
+              },
+            ],
+          };
+        }
+
+        // malformed
+        return {
+          content: [
+            {
+              type: "text",
+              text: "OKAY" // raw garbage string, not a JSON object
+            },
+          ],
+        };
+      }
+    );
+
+    // Delhivery Mock / Tracking
+    server.registerTool(
+      "delhivery_shipment_tracking",
+      {
+        title: "Delhivery Shipment Tracking",
+        description:
+          "Mock endpoint for Delhivery shipment tracking. Supports test_mode.",
+        inputSchema: z.object({
+          test_mode: z
+            .enum(["success", "no_rider", "low_balance",
+            "timeout", "malformed"])
+            .default("success"),
+          awb_number: z.string().optional(),
+        }),
+      },
+      async (args) => {
+        const mode = args.test_mode ?? "success";
+        const awb = args.awb_number || "DELHI123456789";
+
+        if (mode === "success") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  awb_number: awb,
+                  status: "In Transit",
+                  origin: "Delhi",
+                  destination: "Jodhpur",
+                  estimated_delivery: new Date(Date.now() + 86400000)
+                    .toISOString(),
+                  last_updated: new Date().toISOString(),
+                }),
+              },
+            ],
+          };
+        }
+
+        if (mode === "timeout") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  error: "timeout",
+                  message:
+                    "Tracking request timed out. Please try again later.",
+                }),
+              },
+            ],
+          };
+        }
+
+        if (mode === "malformed") {
+          return {
+            content: [{ type: "text", text: "???"}],
+          };
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                error: mode + "_by_delhivery_mock",
+                message:
+                  "Operation failed according to Delhivery mocked outcome: " + mode,
+              }),
+            },
+          ],
+        };
+      }
+    );
+
+    // Delhivery Mock / Pickup Request
+    server.registerTool(
+      "delhivery_pickup_request",
+      {
+        title: "Delhivery Pickup Request",
+        description:
+          "Mock endpoint for Delhivery pickup request. Supports test_mode.",
+        inputSchema: z.object({
+          test_mode: z
+            .enum(["success", "no_rider", "low_balance",
+            "timeout", "malformed"])
+            .default("success"),
+          pickup: z
+            .object({
+              pickup_location_id: z.string(),
+              address_line: z.string(),
+              city: z.string(),
+              state: z.string(),
+              pincode: z.string(),
+              scheduled_date: z.string().optional(),
+            })
+            .optional(),
+        }),
+      },
+      async (args) => {
+        const mode = args.test_mode ?? "success";
+        if (mode === "success") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  pickup_request_id: "PICK" + Date.now().toString(),
+                  status: "Scheduled",
+                  eta: new Date(Date.now() + 3600000).toISOString(),
+                }),
+              },
+            ],
+          };
+        }
+        if (mode === "no_rider") {
+          return {
+            content: [
+              { type: "text", text: JSON.stringify({ success: false, error: "no_rider_available" }) },
+            ]
+          };
+        }
+        if (mode === "low_balance") {
+          return {
+            content: [
+              { type: "text", text: JSON.stringify({ success: false, error: "low_balance" }) },
+            ]
+          };
+        }
+        if (mode === "timeout") {
+          return {
+            content: [
+              { type: "text", text: JSON.stringify({ success: false, error: "timeout" }) },
+            ]
+          };
+        }
+        // malformed
+        return {
+          content: [{ type: "text", text: "{ not-json }" }],
+        };
+      }
+    );
